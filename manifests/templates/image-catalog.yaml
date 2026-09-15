@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elemental-image-catalog
+  namespace: cpaas-system
+data:
+  ${KUBERNETES_VERSION}: ${BASE_IMAGE}

@@ -1,0 +1,80 @@
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: KubeadmControlPlane
+metadata:
+  name: ${CLUSTER_NAME}-control-plane
+  namespace: cpaas-system
+spec:
+  replicas: ${CONTROL_PLANE_REPLICAS}
+  version: ${KUBERNETES_VERSION}
+  kubeadmConfigSpec:
+    format: cloud-config
+    users:
+      - name: boot
+        sshAuthorizedKeys:
+          - ${SSH_AUTHORIZED_KEY}
+    joinConfiguration:
+      nodeRegistration:
+        kubeletExtraArgs:
+          provider-id: PROVIDER_ID
+  machineTemplate:
+    infrastructureRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: BaremetalMachineTemplate
+      name: ${CLUSTER_NAME}-control-plane-machine-template
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: BaremetalMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-worker-machine-template
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: ${CLUSTER_NAME}-worker-pool
+      allocationPolicy: Ordered
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: KubeadmConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-worker-kubeadm-config
+  namespace: cpaas-system
+spec:
+  template:
+    spec:
+      format: cloud-config
+      joinConfiguration:
+        nodeRegistration:
+          kubeletExtraArgs:
+            provider-id: PROVIDER_ID
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: ${CLUSTER_NAME}-worker-deployment
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_REPLICAS}
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/deployment-name: ${CLUSTER_NAME}-worker-deployment
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/deployment-name: ${CLUSTER_NAME}-worker-deployment
+    spec:
+      version: ${KUBERNETES_VERSION}
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: ${CLUSTER_NAME}-worker-kubeadm-config
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: BaremetalMachineTemplate
+        name: ${CLUSTER_NAME}-worker-machine-template

@@ -1,0 +1,16 @@
+config/environments/*.local.yaml
+!config/environments/customer.template.yaml
+*.kubeconfig
+*.kubeconfig.yaml
+credentials/
+secrets/
+logs/
+build/rendered/*
+!build/rendered/.gitkeep
+*.key
+*.pub
+*.qcow2
+*.iso
+*.tar
+*.tar.gz
+.DS_Store
