@@ -1,8 +1,8 @@
 # Alauda Immutable Infrastructure Bare Metal PoC
 
-> 本 README 是本项目的**完整现场部署文档**。客户环境不需要导入整个 Git 项目；可以只携带本 README、版本确认后的 YAML、客户参数表、离线制品和 checksum，在客户 Linux 管理机上按章节手工执行。
+> 本 README 是本项目的完整部署文档。
 
-本项目用于从零搭建一套 Alauda Immutable Infrastructure Bare Metal PoC，包括：
+本项目用于从零搭建一套 **Alauda Immutable Infrastructure Bare Metal 部署环境**，包括：
 
 1. Bare Metal Global 集群控制面（Control Plane）；
 2. Bare Metal Global 集群 Worker Nodes；
@@ -14,9 +14,9 @@
 
 ## 1. 先确认项目边界
 
-### 1.1 本项目覆盖
+### 1.1 Bare Metal 部署架构
 
-本项目使用 Cluster API、Kubeadm Provider、Bare Metal Provider 和 Elemental 物理机生命周期管理：
+本方案使用 Cluster API、Kubeadm Provider、Bare Metal Provider 和 Elemental 物理机生命周期管理：
 
 ```text
 传统 Linux Bootstrap Host
@@ -44,46 +44,31 @@
 
 Bare Metal Provider 不创建或销毁物理服务器。物理服务器通过 ISO 启动并注册为长期存在的 `MachineInventory`，之后通过 `MachineInventoryPool` 分配给 CAPI `Machine`，由 `reprovision` 和 `clean` plan 管理 attach、join、detach 和重装。
 
-### 1.2 本项目不覆盖
+### 1.2 交付边界
 
-- Huawei DCS、vSphere、HCS VM Provider；
-- 未经独立验证的 DCS CP + Bare Metal Worker 跨 Provider 混合集群；
-- ARM64/Kunpeng 可执行部署；当前制品和 Provider 包是 `linux/amd64`；
-- 真实客户密码、Token、BMC 凭证、私钥、kubeconfig、签名 URL；
-- 自动删除物理机、数据盘、最终 `Cluster` 或 `BaremetalCluster`。
+本 README 只描述 **Alauda Immutable Infrastructure Bare Metal 部署方案**：物理服务器通过 Elemental ISO 注册为 `MachineInventory`，再由 Cluster API 和 Bare Metal Provider 创建 Global/Workload 集群。
 
-### 1.3 资料基线
+本次交付基线为 `linux/amd64`。真实客户密码、Token、BMC 凭证、私钥、kubeconfig、签名 URL 不进入仓库；物理机、数据盘和最终集群不由本项目自动清理。
 
-| 项目 | 当前资料基线 | 执行前状态 |
+### 1.3 本次 PoC 固定部署基线
+
+本次部署明确使用 **ACP Core 4.3.2**，并固定使用以下 OS、Kubernetes 和镜像 Tag：
+
+| 项目 | 本次部署值 | 说明 |
 |---|---|---|
-| CPU 架构 | `amd64` | 必须确认 |
-| ACP Core | `v4.3.2` | 必须和交付包确认 |
-| Kubernetes | `v1.34.5` | 必须和 OS image catalog 确认 |
-| Alauda OS | `v4.3.2-1-1.34.5-3` | 必须和兼容矩阵确认 |
-| Kubeadm Provider | `v1.0.14` | 必须和 chart/CRD 确认 |
-| Bare Metal Provider | `v0.0.0-beta.20.g6ad733a3` | 必须和 chart/CRD 确认 |
+| CPU 架构 | `amd64` / `linux/amd64` | 当前交付包只支持 x86_64 |
+| ACP Core | `v4.3.2` | 本次目标平台版本 |
+| Kubernetes | `v1.34.5` | 必须与 OS image catalog key 一致 |
+| Alauda OS | `v4.3.2-1-1.34.5-3` | 与本次 Bare Metal OS 镜像配套 |
+| Bare Metal OS image Tag | `v4.3.2-1-1.34.5-3` | `base-image` 与 `base-image-iso` 共用 |
+| Kubeadm Provider | `v1.0.14` | 以 ACP 4.3.2 交付矩阵最终确认 |
+| Bare Metal Provider | `v0.0.0-beta.20.g6ad733a3` | 以 ACP 4.3.2 交付矩阵最终确认 |
 
-不能只修改 Kubernetes 版本字段。ACP、Alauda OS、Kubernetes、Kubeadm Provider、Bare Metal Provider、镜像和架构必须属于同一验证组合。
-
----
-
-## 2. 交付方式：可以不把项目传进客户环境
-
-客户可能不允许把整个 Git 项目复制进去。这不影响部署。现场最小交付包应包括：
-
-1. 本 README；
-2. 与最终版本匹配的 YAML 文件；
-3. 客户参数表；
-4. `baremetal-base-image-iso` 和 `baremetal-base-image` 离线制品；
-5. `.sha256` checksum；
-6. Provider/Core Package 制品及其版本清单；
-7. 客户批准的 Registry CA 和 Secret 注入方式。
-
-现场不需要依赖本项目脚本。脚本只是可选的检查和渲染工具；真正执行仍按下面的“修改参数 → 执行 YAML/命令 → 检查输出 → 通过后继续”的顺序完成。
+本次文档中的镜像 Tag 不再作为待确认变量。仍需在现场确认 Provider chart/package 与 ACP 4.3.2 完全匹配，并记录实际 digest。不能只修改 Kubernetes 版本字段；ACP、Alauda OS、Kubernetes、Provider、镜像和架构必须属于同一验证组合。
 
 ---
 
-## 3. 统一参数表
+## 2. 统一参数表
 
 在客户批准的 Linux 管理机上建立参数表。密码、Token、BMC 凭证和私钥不能写入 Git 或普通参数文件。
 
@@ -721,25 +706,15 @@ Base64 不是加密。Registry 使用客户 CA；脚本和命令不能把密码�
 
 ---
 
-## 18. 项目文件说明
+## 17. 项目文件说明
 
-README 已包含完整现场部署步骤；仓库中的其他目录用于辅助交付：
+README 已包含完整部署步骤；仓库中的其他目录用于辅助部署：
 
-- `config/`：版本和脱敏客户参数模板；
-- `manifests/templates/`：经过最终 Provider schema 确认后使用的 YAML 模板；
-- `scripts/`：可选的 preflight、渲染、镜像导入、状态检查和静态验证工具；
+- `config/`：版本和客户参数模板；
+- `manifests/templates/`：Bare Metal Kubernetes YAML 模板；
+- `scripts/`：preflight、渲染、镜像导入、状态检查和静态验证工具；
 - `tests/`：模板结构和静态检查；
 - `build/rendered/`：本地渲染产物，默认不提交。
-
-`docs/` 目录已取消，避免交付工程师需要在 README 和多个文档之间来回切换。后续若需要补充内容，优先更新 README，而不是重新建立独立部署文档。
-
-如果客户只能接收单个文件，优先交付：
-
-1. 本 README；
-2. 版本确认后的 YAML；
-3. `customer.template.yaml` 参数表；
-4. 离线 OS 镜像和 checksum；
-5. Provider/Core 制品清单。
 
 ---
 
