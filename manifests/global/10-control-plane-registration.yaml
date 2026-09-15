@@ -1,0 +1,49 @@
+# ROLE: global/10-control-plane-registration.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: elemental.cattle.io/v1beta1
+kind: MachineRegistration
+metadata:
+  name: ${CLUSTER_NAME}-registration
+  namespace: cpaas-system
+  labels:
+    app.kubernetes.io/part-of: cluster-api-provider-baremetal
+spec:
+  machineName: "${CLUSTER_NAME}-${System Information/UUID}"
+  machineInventoryLabels:
+    app.kubernetes.io/part-of: cluster-api-provider-baremetal
+    pool.baremetal.alauda.io/eligible: "true"
+  machineInventoryAnnotations:
+    elemental.cattle.io/machine-uuid: "${System Information/UUID}"
+  config:
+    elemental:
+      install:
+        device: ${INSTALL_DEVICE}
+        eject-cd: true
+        reboot: true
+        snapshotter:
+          type: btrfs
+          maxSnaps: 4
+      registration:
+        emulate-tpm: ${EMULATE_TPM}
+        emulated-tpm-seed: -1
+---
+apiVersion: elemental.cattle.io/v1beta1
+kind: SeedImage
+metadata:
+  name: ${CLUSTER_NAME}-registration-iso
+  namespace: cpaas-system
+  labels:
+    app.kubernetes.io/part-of: cluster-api-provider-baremetal
+spec:
+  type: iso
+  baseImage: ${BASE_IMAGE_ISO}
+  targetPlatform: linux/amd64
+  size: 20Gi
+  cleanupAfterMinutes: 120
+  registrationRef:
+    apiVersion: elemental.cattle.io/v1beta1
+    kind: MachineRegistration
+    name: ${CLUSTER_NAME}-registration
+    namespace: cpaas-system

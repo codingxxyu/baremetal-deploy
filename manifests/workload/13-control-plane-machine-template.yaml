@@ -1,0 +1,17 @@
+# ROLE: workload/13-control-plane-machine-template.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: BaremetalMachineTemplate
+metadata:
+  name: ${CLUSTER_NAME}-control-plane-machine-template
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: ${CLUSTER_NAME}-control-plane-pool
+      allocationPolicy: Ordered

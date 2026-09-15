@@ -77,9 +77,10 @@ export NAMESPACE=cpaas-system
 export ARCHITECTURE=amd64
 export KUBERNETES_VERSION=v1.34.5
 export OS_IMAGE_TAG=v4.3.2-1-1.34.5-3
-export TARGET_REGISTRY=registry.customer.example:11443
-export BASE_IMAGE=${TARGET_REGISTRY}/tkestack/baremetal-base-image:${OS_IMAGE_TAG}
-export BASE_IMAGE_ISO=${TARGET_REGISTRY}/tkestack/baremetal-base-image-iso:${OS_IMAGE_TAG}
+# setup.sh creates this platform-owned registry on the Bootstrap Host.
+export BOOTSTRAP_REGISTRY=192.0.2.10:11443
+export BASE_IMAGE=${BOOTSTRAP_REGISTRY}/tkestack/baremetal-base-image:${OS_IMAGE_TAG}
+export BASE_IMAGE_ISO=${BOOTSTRAP_REGISTRY}/tkestack/baremetal-base-image-iso:${OS_IMAGE_TAG}
 export GLOBAL_NAME=global
 export WORKLOAD_NAME=workload-poc
 export GLOBAL_API_HOST=global-api.customer.example
@@ -97,13 +98,13 @@ export KUBE_OVN_JOIN_CIDR=100.5.0.0/16
 - `ARCHITECTURE`：当前只能为 `amd64`；ARM64/aarch64/Kunpeng 必须停止；
 - `KUBERNETES_VERSION`：必须在 `elemental-image-catalog` 中存在；
 - `OS_IMAGE_TAG`：`base-image` 和 `base-image-iso` 的配套 Tag；
-- `TARGET_REGISTRY`：最终 Global/Workload 节点访问的 Registry；
+- `BOOTSTRAP_REGISTRY`：由 Bootstrap `setup.sh` 创建的平台自建 Registry，物理节点 provisioning 阶段从这里拉取镜像；
 - `GLOBAL_API_HOST`/`WORKLOAD_API_HOST`：API 稳定入口，必须和 DNS、LB、证书 SAN 一致；
 - 三个 CIDR：不能与物理机网段、管理网、存储网、业务网或同一 Global 上其他 CAPI 集群重叠。
 
 ---
 
-## 4. 第 0 步：版本和兼容性冻结
+## 3. 第 0 步：版本和兼容性冻结
 
 执行部署前取得并归档：
 
@@ -120,7 +121,7 @@ export KUBE_OVN_JOIN_CIDR=100.5.0.0/16
 
 ---
 
-## 5. 第 1 步：客户基础设施前置条件
+## 4. 第 1 步：客户基础设施前置条件
 
 ### 5.1 Bootstrap Host
 
@@ -132,7 +133,8 @@ export KUBE_OVN_JOIN_CIDR=100.5.0.0/16
 - KIND、kubectl、curl、jq、nerdctl、gzip、sha256sum；
 - 固定 IP；
 - 建议至少 8 CPU、16 GB RAM、300 GB 可用空间；
-- 能访问客户网络、目标 Registry、物理机和最终 Global API；
+- 能访问客户网络、物理机和最终 Global API；
+- `setup.sh` 启动的平台自建 Bootstrap Registry 能被待安装节点访问；
 - 能为待安装节点提供 Bootstrap Registry。
 
 Bootstrap Host 只运行临时 `minialauda`，不会加入最终 Global Cluster。
@@ -154,7 +156,14 @@ Bootstrap Host 只运行临时 `minialauda`，不会加入最终 Global Cluster�
 
 安装盘必须明确，不能在多盘主机上盲目使用 `/dev/sda`。清理所有旧的 `COS_STATE`、`COS_PERSISTENT`、`COS_OEM`、`COS_RECOVERY` 标签；需要保留的数据盘不能误擦除。
 
-### 5.3 网络、DNS、NTP、Registry 和 LB
+### 5.3 网络、DNS、NTP、平台自建 Registry 和 LB
+
+默认不使用客户已有镜像仓库。平台 Registry 的生命周期分为两个阶段：
+
+1. **Bootstrap 阶段**：在 Bootstrap Host 执行 `setup.sh`，由平台创建临时 Bootstrap Registry；Global 节点首次安装和 Provider 包使用该 Registry；
+2. **Handoff 后**：平台在最终 Global 上接管并提供最终 Registry。后续 Workload 节点使用最终 Global 的平台 Registry，不需要客户另建 Registry。
+
+因此，部署前只需要确认 Bootstrap Host 的 Registry 地址可以被待安装节点访问，以及平台后续使用的 Registry 端口和 TLS/认证策略。客户可以提供网络连通和 CA 信任，但不需要提供客户自建镜像仓库。
 
 至少准备并放通：
 
@@ -180,14 +189,16 @@ Bootstrap Host 只运行临时 `minialauda`，不会加入最终 Global Cluster�
 
 ---
 
-## 6. 第 2 步：离线导入两个 Bare Metal OS 镜像
+## 6. 第 2 步：创建 Bootstrap，再把镜像推入平台 Registry
+
+> 顺序很重要：先执行第 3 步的 Bootstrap `setup.sh`，确认平台自建 Bootstrap Registry 已启动；再回到本节执行镜像导入和 push。不能在 Bootstrap Registry 尚未创建时，把镜像推送到一个假定的客户 Registry。
 
 必须同时导入两个配套镜像：
 
 - `baremetal-base-image-iso:<tag>`：给 `SeedImage.spec.baseImage`，用于首次 ISO 启动；
 - `baremetal-base-image:<tag>`：给 `elemental-image-catalog`，用于 reprovision/升级。
 
-两者必须同版本、同架构、可从目标 Registry pull。离线包当前是 amd64-only。
+两者必须同版本、同架构，并最终能从平台自建 Bootstrap Registry pull。离线包当前是 amd64-only。此处的 Registry 地址使用 `BOOTSTRAP_REGISTRY`，不是客户自建 Registry。
 
 ### 6.1 校验、解压和 load
 
@@ -203,7 +214,15 @@ checksum 失败时停止，不继续导入。
 
 ### 6.2 Tag、Push、Pull 验证
 
+先确认第 7 节的 `setup.sh` 已完成，并取得平台实际创建的 Bootstrap Registry 地址。如果平台 Registry 使用认证，按现场生成的 Registry Secret/凭证登录；不把凭证写入本文档。
+
 ```bash
+# BOOTSTRAP_REGISTRY 必须是 setup.sh 创建的平台 Registry 的可达地址。
+# 例如：<bootstrap-host-ip>:11443
+export BOOTSTRAP_REGISTRY=192.0.2.10:11443
+export BASE_IMAGE=${BOOTSTRAP_REGISTRY}/tkestack/baremetal-base-image:${OS_IMAGE_TAG}
+export BASE_IMAGE_ISO=${BOOTSTRAP_REGISTRY}/tkestack/baremetal-base-image-iso:${OS_IMAGE_TAG}
+
 sudo nerdctl --namespace default tag \
   build-harbor.alauda.cn/tkestack/baremetal-base-image-iso:${OS_IMAGE_TAG} \
   ${BASE_IMAGE_ISO}
@@ -212,16 +231,17 @@ sudo nerdctl --namespace default tag \
   build-harbor.alauda.cn/tkestack/baremetal-base-image:${OS_IMAGE_TAG} \
   ${BASE_IMAGE}
 
-sudo nerdctl --namespace default login "${TARGET_REGISTRY}"
+# 只有平台 Registry 启用认证时才执行交互式 login。
+sudo nerdctl --namespace default login "${BOOTSTRAP_REGISTRY}"
 sudo nerdctl --namespace default push "${BASE_IMAGE_ISO}"
 sudo nerdctl --namespace default push "${BASE_IMAGE}"
 sudo nerdctl --namespace default pull "${BASE_IMAGE_ISO}"
 sudo nerdctl --namespace default pull "${BASE_IMAGE}"
 ```
 
-生产环境优先把 Registry CA 安装到 containerd 信任目录。`--insecure-registry` 只可用于临时验证。最终 YAML 不得引用 `build-harbor.alauda.cn`。
+生产环境优先把平台 Registry CA 安装到 containerd 信任目录。`--insecure-registry` 只可用于临时验证。最终 YAML 不得引用 `build-harbor.alauda.cn`；该地址只能作为离线包 load 后的原始镜像名。
 
-成功标准：目标 Registry 中两个镜像均可 pull，并记录 digest。
+成功标准：平台自建 Bootstrap Registry 中两个镜像均可 pull，并记录 digest。
 
 ---
 
@@ -259,6 +279,8 @@ kubectl get nodes
 1. Kubeadm Provider AppRelease；
 2. Bare Metal Provider umbrella chart/AppRelease（包含 Bare Metal manager 和 `elemental-operator`）。
 
+本仓库不伪造 ACP 4.3.2 的 AppRelease schema。`manifests/bootstrap/00-kubeadm-provider-apprelease.yaml` 和 `01-baremetal-provider-apprelease.yaml` 是待由 ACP 4.3.2 正式交付包替换的占位文件，不能直接 apply；官方 AppRelease YAML 替换后才执行。镜像目录对应 `manifests/bootstrap/02-image-catalog.yaml`。
+
 不要把旧 DCS AppRelease 直接改名为 Bare Metal Provider 资源。
 
 ### 8.2 需要修改/确认的参数
@@ -275,8 +297,12 @@ kubectl get nodes
 ### 8.3 执行和检查
 
 ```bash
-kubectl apply -f <kubeadm-provider-apprelease.yaml>
-kubectl apply -f <baremetal-provider-apprelease.yaml>
+# Apply the ACP 4.3.2 release-matched AppRelease YAML supplied with the delivery package.
+# Do not invent or copy fields from another release:
+kubectl apply -f <acp-4.3.2-kubeadm-provider-apprelease.yaml>
+kubectl apply -f <acp-4.3.2-baremetal-provider-apprelease.yaml>
+# Then apply the repository image catalog after its registry/version values are rendered:
+kubectl apply -f manifests/bootstrap/02-image-catalog.yaml
 kubectl -n cpaas-system get deploy,pods
 kubectl get crd | grep -E \
   'baremetal|machineinventory|machineregistration|seedimage|kubeadmcontrolplane'
@@ -307,7 +333,7 @@ Global CP 和 Global Worker 使用不同的物理机、Inventory、Pool 和 Mach
 执行：
 
 ```bash
-kubectl apply -f global-machine-registration.yaml
+kubectl apply -f manifests/global/10-control-plane-registration.yaml
 kubectl -n cpaas-system get machineregistration,seedimage
 ```
 
@@ -341,7 +367,7 @@ spec:
 检查每个 Inventory 只在一个 active pool 中，pool capacity 不小于 KCP replicas，然后执行：
 
 ```bash
-kubectl apply -f global-cp-pool.yaml
+kubectl apply -f manifests/global/11-control-plane-pool.yaml
 kubectl -n cpaas-system get machineinventorypool
 ```
 
@@ -349,10 +375,10 @@ kubectl -n cpaas-system get machineinventorypool
 
 按依赖顺序准备并执行四类 YAML：
 
-1. `global-baremetal-cluster.yaml`：API VIP/LB、端口、Internal/External 模式；
-2. `global-cp-machine-template.yaml`：引用 `global-control-plane-pool`；
-3. `global-cluster.yaml`：引用 Global `BaremetalCluster` 和 KCP；
-4. `global-kubeadm-control-plane.yaml`：replicas、Kubernetes version、bootstrap data、CP template。
+1. `manifests/global/12-baremetal-cluster.yaml`：API VIP/LB、端口、Internal/External 模式；
+2. `manifests/global/13-control-plane-machine-template.yaml`：引用 `global-control-plane-pool`；
+3. `manifests/global/14-cluster.yaml`：引用 Global `BaremetalCluster` 和 KCP；
+4. `manifests/global/15-control-plane.yaml`：replicas、Kubernetes version、bootstrap data、CP template。
 
 必须修改/确认：
 
@@ -367,10 +393,10 @@ kubectl -n cpaas-system get machineinventorypool
 执行：
 
 ```bash
-kubectl apply -f global-baremetal-cluster.yaml
-kubectl apply -f global-cp-machine-template.yaml
-kubectl apply -f global-cluster.yaml
-kubectl apply -f global-kubeadm-control-plane.yaml
+kubectl apply -f manifests/global/12-baremetal-cluster.yaml
+kubectl apply -f manifests/global/13-control-plane-machine-template.yaml
+kubectl apply -f manifests/global/14-cluster.yaml
+kubectl apply -f manifests/global/15-control-plane.yaml
 kubectl -n cpaas-system get \
   cluster,baremetalcluster,kubeadmcontrolplane,machine,baremetalmachine
 ```
@@ -420,7 +446,7 @@ spec:
 执行：
 
 ```bash
-kubectl apply -f global-worker-pool.yaml
+kubectl apply -f manifests/global/21-worker-pool.yaml
 kubectl -n cpaas-system get machineinventorypool
 ```
 
@@ -428,16 +454,16 @@ kubectl -n cpaas-system get machineinventorypool
 
 准备并修改：
 
-1. `global-worker-machine-template.yaml`：`machineInventoryPoolRef.name` 指向 `global-worker-pool`；
-2. `global-worker-kubeadm-config-template.yaml`：join configuration、SSH key、版本；
-3. `global-worker-machine-deployment.yaml`：`clusterName: global`、replicas、Worker template 引用、bootstrap config 引用、version。
+1. `manifests/global/22-worker-machine-template.yaml`：`machineInventoryPoolRef.name` 指向 `global-worker-pool`；
+2. `manifests/global/23-worker-kubeadm-config-template.yaml`：join configuration、SSH key、版本；
+3. `manifests/global/24-worker-machine-deployment.yaml`：`clusterName: global`、replicas、Worker template 引用、bootstrap config 引用、version。
 
 所有 `metadata.name` 和 `infrastructureRef/configRef` 必须一致。Worker replicas 不得超过 Worker pool capacity。
 
 ```bash
-kubectl apply -f global-worker-machine-template.yaml
-kubectl apply -f global-worker-kubeadm-config-template.yaml
-kubectl apply -f global-worker-machine-deployment.yaml
+kubectl apply -f manifests/global/22-worker-machine-template.yaml
+kubectl apply -f manifests/global/23-worker-kubeadm-config-template.yaml
+kubectl apply -f manifests/global/24-worker-machine-deployment.yaml
 kubectl -n cpaas-system get \
   machinedeployment,machine,baremetalmachine
 kubectl get nodes -o wide
@@ -514,17 +540,17 @@ spec:
 修改 `clusterName`、pool name 和 Inventory refs。Workload CP Inventory 不能属于 Global pool。
 
 ```bash
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-cp-pool.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/11-control-plane-pool.yaml
 ```
 
 ### 12.3 创建 Workload Cluster、BaremetalCluster、CP Template、KCP
 
 按依赖顺序执行：
 
-1. `workload-baremetal-cluster.yaml`：Workload API VIP/LB、端口、LB mode；
-2. `workload-cp-machine-template.yaml`：引用 Workload CP pool；
-3. `workload-cluster.yaml`：引用 Workload BaremetalCluster；
-4. `workload-kcp.yaml`：replicas、version、CP template。
+1. `manifests/workload/12-baremetal-cluster.yaml`：Workload API VIP/LB、端口、LB mode；
+2. `manifests/workload/13-control-plane-machine-template.yaml`：引用 Workload CP pool；
+3. `manifests/workload/14-cluster.yaml`：引用 Workload BaremetalCluster；
+4. `manifests/workload/15-control-plane.yaml`：replicas、version、CP template。
 
 必须修改/确认：
 
@@ -536,10 +562,10 @@ kubectl --kubeconfig <global-kubeconfig> apply -f workload-cp-pool.yaml
 - Kubernetes version 与 Global/OS image catalog 一致。
 
 ```bash
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-baremetal-cluster.yaml
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-cp-machine-template.yaml
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-cluster.yaml
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-kcp.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/12-baremetal-cluster.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/13-control-plane-machine-template.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/14-cluster.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/15-control-plane.yaml
 kubectl --kubeconfig <global-kubeconfig> -n cpaas-system get \
   cluster,baremetalcluster,kubeadmcontrolplane,machine,baremetalmachine
 ```
@@ -587,24 +613,24 @@ spec:
 ```
 
 ```bash
-kubectl --kubeconfig <global-kubeconfig> apply -f workload-worker-pool.yaml
+kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/21-worker-pool.yaml
 ```
 
 ### 13.3 创建 Workload Worker Template、ConfigTemplate、Deployment
 
 修改并执行：
 
-1. `workload-worker-machine-template.yaml`：`machineInventoryPoolRef.name` 指向 Workload Worker pool；
-2. `workload-worker-kubeadm-config-template.yaml`：join configuration、SSH key、版本；
-3. `workload-worker-machine-deployment.yaml`：`clusterName: workload-poc`、replicas、template/config 引用、version。
+1. `manifests/workload/22-worker-machine-template.yaml`：`machineInventoryPoolRef.name` 指向 Workload Worker pool；
+2. `manifests/workload/23-worker-kubeadm-config-template.yaml`：join configuration、SSH key、版本；
+3. `manifests/workload/24-worker-machine-deployment.yaml`：`clusterName: workload-poc`、replicas、template/config 引用、version。
 
 ```bash
 kubectl --kubeconfig <global-kubeconfig> \
-  apply -f workload-worker-machine-template.yaml
+  apply -f manifests/workload/22-worker-machine-template.yaml
 kubectl --kubeconfig <global-kubeconfig> \
-  apply -f workload-worker-kubeadm-config-template.yaml
+  apply -f manifests/workload/23-worker-kubeadm-config-template.yaml
 kubectl --kubeconfig <global-kubeconfig> \
-  apply -f workload-worker-machine-deployment.yaml
+  apply -f manifests/workload/24-worker-machine-deployment.yaml
 kubectl --kubeconfig <global-kubeconfig> -n cpaas-system get \
   machinedeployment,machine,baremetalmachine
 ```
@@ -705,6 +731,24 @@ kubectl --kubeconfig <workload-kubeconfig> get pods -A
 Base64 不是加密。Registry 使用客户 CA；脚本和命令不能把密码写进命令行或日志。清理默认采用保守方式，不自动删除物理机和数据盘。
 
 ---
+
+## 17. Manifest 文件与部署阶段对应关系
+
+以下是本仓库实际存在的 YAML 文件。README 中的每一步都必须使用这里的路径，不使用未提交的临时文件名。
+
+| 阶段 | 实际文件 | 使用的 kubeconfig | 说明 |
+|---|---|---|---|
+| Bootstrap Provider | `manifests/bootstrap/00-kubeadm-provider-apprelease.yaml` | `minialauda` | ACP 4.3.2 交付包提供的 Kubeadm AppRelease；需先放入并按 schema 核对 |
+| Bootstrap Provider | `manifests/bootstrap/01-baremetal-provider-apprelease.yaml` | `minialauda` | ACP 4.3.2 交付包提供的 Bare Metal umbrella AppRelease；需先放入并按 schema 核对 |
+| Bootstrap image catalog | `manifests/bootstrap/02-image-catalog.yaml` | `minialauda` | `base-image` 的 Kubernetes version → image 映射；ISO 不放在 catalog |
+| Global CP registration | `manifests/global/10-control-plane-registration.yaml` | `minialauda` | 同一 YAML 包含 Global CP 的 `MachineRegistration` 和 `SeedImage` |
+| Global CP pool | `manifests/global/11-control-plane-pool.yaml` | `minialauda` | 只填写 Global CP Inventory |
+| Global CP cluster | `manifests/global/12-baremetal-cluster.yaml`, `13-control-plane-machine-template.yaml`, `14-cluster.yaml`, `15-control-plane.yaml` | `minialauda` | 依次创建 BaremetalCluster、CP template、Cluster、KCP |
+| Global Worker | `manifests/global/20-worker-registration.yaml`, `21-worker-pool.yaml`, `22-worker-machine-template.yaml`, `23-worker-kubeadm-config-template.yaml`, `24-worker-machine-deployment.yaml` | `minialauda` | 独立 Registration/SeedImage、InventoryPool、template、bootstrap config、MachineDeployment |
+| Workload CP | `manifests/workload/10-control-plane-registration.yaml`, `11-control-plane-pool.yaml`, `12-baremetal-cluster.yaml`, `13-control-plane-machine-template.yaml`, `14-cluster.yaml`, `15-control-plane.yaml` | final Global | Workload CP 独立物理机和 pool |
+| Workload Worker | `manifests/workload/20-worker-registration.yaml`, `21-worker-pool.yaml`, `22-worker-machine-template.yaml`, `23-worker-kubeadm-config-template.yaml`, `24-worker-machine-deployment.yaml` | final Global | Workload Worker 独立物理机和 pool |
+
+`manifests/templates/` 是这些阶段文件的参数化来源。当前 Bootstrap AppRelease 两个文件和对应 chart values 必须由 ACP 4.3.2 正式交付包提供；没有官方 schema 时不得自行补写 AppRelease 字段。
 
 ## 17. 项目文件说明
 

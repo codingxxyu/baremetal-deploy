@@ -11,12 +11,13 @@ bootstrap:
   platform_host: global.example.invalid
 
 registry:
-  address: registry.example.invalid:11443
+  mode: platform-bootstrap
+  # setup.sh creates the platform registry; replace with the reachable Bootstrap Host address.
+  bootstrap_address: 192.0.2.10:11443
   project: tkestack
-  tls_verify: true
   image_tag: v4.3.2-1-1.34.5-3
-  base_image: registry.example.invalid:11443/tkestack/baremetal-base-image:v4.3.2-1-1.34.5-3
-  base_image_iso: registry.example.invalid:11443/tkestack/baremetal-base-image-iso:v4.3.2-1-1.34.5-3
+  base_image: 192.0.2.10:11443/tkestack/baremetal-base-image:v4.3.2-1-1.34.5-3
+  base_image_iso: 192.0.2.10:11443/tkestack/baremetal-base-image-iso:v4.3.2-1-1.34.5-3
 
 control_plane:
   replicas: 3

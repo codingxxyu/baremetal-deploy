@@ -1,0 +1,25 @@
+# ROLE: workload/14-cluster.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: [${PODS_CIDR}]
+    services:
+      cidrBlocks: [${SERVICES_CIDR}]
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: BaremetalCluster
+    name: ${CLUSTER_NAME}
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+    kind: KubeadmControlPlane
+    name: ${CLUSTER_NAME}-control-plane

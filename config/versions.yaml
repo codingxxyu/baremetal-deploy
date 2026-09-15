@@ -6,4 +6,4 @@ alauda_os: v4.3.2-1-1.34.5-3
 kubeadm_provider: v1.0.14
 baremetal_provider: v0.0.0-beta.20.g6ad733a3
 image_tag: v4.3.2-1-1.34.5-3
-support_matrix_status: pending-confirmation
+support_matrix_status: acp-4.3.2-baseline

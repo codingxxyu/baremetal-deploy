@@ -15,5 +15,6 @@ for path in (root / "manifests" / "templates").glob("*.yaml"):
 
 config = (root / "config" / "environments" / "customer.template.yaml").read_text()
 assert "architecture: amd64" in config
-assert "registry.example.invalid" in config
+assert "mode: platform-bootstrap" in config
+assert "bootstrap_address:" in config
 print("template checks passed")

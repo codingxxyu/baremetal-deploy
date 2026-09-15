@@ -1,0 +1,32 @@
+# ROLE: workload/24-worker-machine-deployment.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachineDeployment
+metadata:
+  name: ${CLUSTER_NAME}-worker-deployment
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  clusterName: ${CLUSTER_NAME}
+  replicas: ${WORKER_REPLICAS}
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/deployment-name: ${CLUSTER_NAME}-worker-deployment
+  template:
+    metadata:
+      labels:
+        cluster.x-k8s.io/deployment-name: ${CLUSTER_NAME}-worker-deployment
+    spec:
+      version: ${KUBERNETES_VERSION}
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: KubeadmConfigTemplate
+          name: ${CLUSTER_NAME}-worker-kubeadm-config
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: BaremetalMachineTemplate
+        name: ${CLUSTER_NAME}-worker-machine-template

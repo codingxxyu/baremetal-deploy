@@ -1,0 +1,13 @@
+# ROLE: global/11-control-plane-pool.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: MachineInventoryPool
+metadata:
+  name: ${CLUSTER_NAME}-control-plane-pool
+  namespace: cpaas-system
+spec:
+  clusterName: ${CLUSTER_NAME}
+  inventoryRefs:
+${CONTROL_PLANE_INVENTORY_REFS}

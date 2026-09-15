@@ -1,0 +1,17 @@
+# ROLE: workload/12-baremetal-cluster.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: BaremetalCluster
+metadata:
+  name: ${CLUSTER_NAME}
+  namespace: cpaas-system
+  labels:
+    cpaas.io/cluster-name: ${CLUSTER_NAME}
+spec:
+  controlPlaneLoadBalancer:
+    type: ${LB_MODE}
+    host: ${CONTROL_PLANE_ENDPOINT_HOST}
+    port: ${CONTROL_PLANE_ENDPOINT_PORT}
+${INTERNAL_LB_FIELDS}

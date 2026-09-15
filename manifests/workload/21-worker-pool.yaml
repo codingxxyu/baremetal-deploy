@@ -1,0 +1,13 @@
+# ROLE: workload/21-worker-pool.yaml
+# Parameterized copy of manifests/templates. Render with role-specific variables.
+# Verify every field against the ACP 4.3.2 CRD schema before apply.
+
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: MachineInventoryPool
+metadata:
+  name: ${CLUSTER_NAME}-worker-pool
+  namespace: cpaas-system
+spec:
+  clusterName: ${CLUSTER_NAME}
+  inventoryRefs:
+${WORKER_INVENTORY_REFS}

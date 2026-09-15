@@ -1,0 +1,10 @@
+# Applies on bootstrap after setup.sh and after both images are pushed to the platform Bootstrap Registry.
+# Verify ConfigMap contract against ACP 4.3.2 provider schema.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elemental-image-catalog
+  namespace: cpaas-system
+data:
+  ${KUBERNETES_VERSION}: ${BASE_IMAGE}
