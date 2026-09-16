@@ -17,4 +17,16 @@ config = (root / "config" / "environments" / "customer.template.yaml").read_text
 assert "architecture: amd64" in config
 assert "mode: platform-bootstrap" in config
 assert "bootstrap_address:" in config
+assert "cos_state_size_mib: 20480" in config
+assert "install_device_acknowledged: false" in config
+for path in (root / "manifests" / "global").glob("*-registration.yaml"):
+    text = path.read_text()
+    assert "SeedImage" in text, path
+    assert "partitions.yaml" in text, path
+    assert "System Information/UUID" in text, path
+for path in (root / "manifests" / "workload").glob("*-registration.yaml"):
+    text = path.read_text()
+    assert "SeedImage" in text, path
+    assert "partitions.yaml" in text, path
+    assert "System Information/UUID" in text, path
 print("template checks passed")

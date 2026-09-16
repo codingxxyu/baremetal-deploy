@@ -41,9 +41,23 @@ network:
 
 hosts:
   install_device: /dev/elemental-install-target
+  install_device_acknowledged: false
   target_platform: linux/amd64
   emulate_tpm: true
   ssh_authorized_keys_file: /secure/path/id_ed25519.pub
+
+storage:
+  # Confirm units and minimum with the ACP 4.3.2 Elemental schema.
+  cos_state_size_mib: 20480
+  data_volumes: []
+  # Example only; do not enable without a storage approval and stable device ID.
+  # - role: workload-control-plane
+  #   host: workload-cp-01
+  #   device_id: wwn-REPLACE
+  #   filesystem: xfs
+  #   mount_path: /var/lib/example
+  #   lifecycle: adopt
+  #   initialization: never
 
 # 外部注入，不在此文件填写值：
 # REGISTRY_USERNAME / REGISTRY_PASSWORD

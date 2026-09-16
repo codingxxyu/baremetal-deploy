@@ -1012,3 +1012,156 @@ Workload 创建不是“apply 四个 YAML 就完成”。每个门禁必须通�
 10. Workload CP Ready 后，才创建 Worker MachineDeployment。
 
 如果跳过 Image Catalog 或 SeedImage 门禁，常见结果是注册成功但 reprovision 失败、`ImageCatalogMiss`、plan Failed 或节点永远不 Ready。
+
+## 22. 官方状态门禁与存储检查命令
+
+本节补充官方 Bare Metal 创建集群页面中的状态门禁。不能只看资源存在；每个阶段都要检查对应 Condition、Reason 和后续对象。
+
+### 22.1 Provider 安装门禁
+
+在现有 Global 或 Bootstrap 管理集群上确认：
+
+```bash
+kubectl -n cpaas-system get deploy,pods
+kubectl get crd | grep -E \
+  'baremetalclusters|baremetalmachines|baremetalmachinetemplates|machineinventorypools|machineinventories|machineregistrations|seedimages|kubeadmcontrolplanes'
+kubectl -n cpaas-system get configmap elemental-image-catalog -o yaml
+```
+
+必须看到 Bare Metal manager、`elemental-operator`、Kubeadm controller 正常，并且 `elemental-image-catalog` 存在。Provider 安装完成不等于物理集群已经创建。
+
+### 22.2 SeedImage 门禁
+
+每一个角色的 Registration/SeedImage YAML apply 后，等待：
+
+```bash
+kubectl -n cpaas-system wait \
+  --for=condition=SeedImageReady=True \
+  seedimage/<role-registration-iso> \
+  --timeout=30m
+```
+
+然后检查完整状态：
+
+```bash
+kubectl -n cpaas-system describe seedimage <role-registration-iso>
+kubectl -n cpaas-system get seedimage <role-registration-iso> -o yaml
+```
+
+成功标准不仅是 Condition，还包括：
+
+- `SeedImageReady=True`；
+- Reason 为官方成功原因（例如 `SeedImageBuildSuccess`，以 ACP 4.3.2 实际 CRD 为准）；
+- 生成的 download URL/ISO 位置非空；
+- checksum URL 或 checksum 信息非空；
+- `baseImage` 是目标 Registry 的 `baremetal-base-image-iso:<tag>`；
+- ISO 可以被物理机的虚拟 CD/BMC 介质访问。
+
+### 22.3 MachineInventory 门禁
+
+物理机从 ISO 启动后，Elemental 才会创建 Inventory：
+
+```bash
+kubectl -n cpaas-system get machineinventories.elemental.cattle.io -o wide
+kubectl -n cpaas-system describe machineinventory <actual-inventory-name>
+```
+
+不要用预计的主机名代替实际 Inventory 名。只有在以下条件满足后才能写入 Pool：
+
+- Inventory 已创建；
+- 对应物理主机和角色确认无误；
+- Ready/Available 条件通过；
+- observed network 正确；
+- plan Secret 存在；
+- 没有注册、TPM、DNS、NTP、TLS、Registry 或磁盘错误。
+
+### 22.4 数据盘准备门禁
+
+数据盘属于 `MachineInventory`，不是 `BaremetalMachineTemplate` 的 VM 磁盘列表。使用稳定设备身份（WWN/序列等），不能把 `/dev/sda`、`/dev/nvme0n1` 等运行时路径写入持久声明。
+
+如果现场声明了 managed data volumes，在 Inventory 尚未分配前完成 storage preparation，并检查目标版本实际提供的状态字段。例如按 ACP 4.3.2 CRD/Provider 输出确认：
+
+```bash
+kubectl -n cpaas-system describe machineinventory <inventory-name>
+kubectl -n cpaas-system get machineinventory <inventory-name> -o yaml
+```
+
+需要看到与目标版本对应的：
+
+- `StoragePrepared=True` 或官方等价条件；
+- 所有必需卷已准备（例如 `AllRequiredVolumesPrepared` 等官方条件）；
+- storage phase 为 `Prepared` 或官方等价状态；
+- 后续分配后 volume 为 Active；
+- `BaremetalMachine` 的 storage 条件为 Ready（如果该版本提供）。
+
+如果 `spec.storage` 为空，按官方行为应是 Unmanaged/NoManagedVolumes，而不是假设系统已经准备了业务盘。不要凭猜测添加 storage 字段；先用 ACP 4.3.2 CRD 确认字段名和策略。
+
+### 22.5 Pool 门禁
+
+每个角色建立一个 Pool：
+
+```text
+Global CP pool
+Global Worker pool
+Workload CP pool
+Workload Worker pool
+```
+
+检查：
+
+```bash
+kubectl -n cpaas-system get machineinventorypool -o yaml
+```
+
+每个 Pool 必须满足：
+
+- `clusterName` 正确；
+- `inventoryRefs` 是实际 Inventory 名；
+- CP pool capacity 不小于 KCP replicas；
+- Worker pool capacity 不小于 MachineDeployment replicas；
+- 一个 Inventory 不在两个 active Pool 中；
+- Pool Ready、MembersValid、Available 等官方条件通过；
+- 被分配 Inventory 的 plan/storage 状态满足 Provider 门禁。
+
+### 22.6 Cluster 和节点门禁
+
+创建 `BaremetalCluster`、CP template、Cluster、KCP 后检查：
+
+```bash
+kubectl -n cpaas-system get baremetalcluster,cluster,kubeadmcontrolplane,machine,baremetalmachine
+kubectl -n cpaas-system describe kubeadmcontrolplane <cluster>-control-plane
+kubectl -n cpaas-system get events --sort-by=.lastTimestamp
+```
+
+CP 成功标准：
+
+- `BaremetalCluster` Ready/EndpointReady；
+- control-plane endpoint 可达；
+- CP plan Applied；
+- KCP replicas 达标；
+- kubeconfig Secret 生成；
+- CP Nodes Ready。
+
+Workload Worker 的 MachineDeployment 只能在 Workload CP Ready 后创建。检查：
+
+```bash
+kubectl -n cpaas-system get machinedeployment,machine,baremetalmachine
+kubectl --kubeconfig <workload-kubeconfig> get nodes -o wide
+```
+
+Worker 成功标准：
+
+- desired/available replicas 达标；
+- Worker plans Applied；
+- Worker storage 条件满足（如启用 managed data volumes）；
+- Workload CP 和 Worker 全部 Ready。
+
+### 22.7 失败定位优先级
+
+- `ImageCatalogMiss`：先查版本 key、base-image 地址和 digest；
+- `SeedImage` build 失败：查 Registry、TLS、registrationRef、Operator logs、download/checksum URL；
+- Inventory 不出现：查 ISO 启动、DNS、平台 443、TPM、硬件时钟；
+- Inventory 出现但 Pool 不可用：查 Ready、plan Secret、storage 状态和重复分配；
+- CP endpoint 不通：查 External LB listener/backend/DNS/TLS SAN，或 Internal VIP 的 L2、VRID、VRRP、IPVS/sysctl；
+- reprovision 失败：查 `MachineInventory` plan、OS image、安装盘和 cloud-config；
+- Worker 不加入：查 KubeadmConfigTemplate、6443、Registry 和 MachineDeployment 引用。
