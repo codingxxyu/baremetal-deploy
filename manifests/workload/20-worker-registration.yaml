@@ -1,6 +1,6 @@
-# ROLE: workload/20-worker-registration.yaml
-# Parameterized copy of manifests/templates. Render with role-specific variables.
-# Verify every field against the ACP 4.3.2 CRD schema before apply.
+# ROLE: manifests/workload/20-worker-registration.yaml
+# Applies after provider readiness. Wait for SeedImageReady before booting hosts.
+# Verify fields against ACP 4.3.2 CRDs before apply.
 
 apiVersion: elemental.cattle.io/v1beta1
 kind: MachineRegistration
@@ -10,15 +10,19 @@ metadata:
   labels:
     app.kubernetes.io/part-of: cluster-api-provider-baremetal
 spec:
+  # These ${System Information/...} expressions are consumed by elemental-register
+  # from SMBIOS data. Do not pass this file through envsubst over these expressions.
   machineName: "${CLUSTER_NAME}-${System Information/UUID}"
   machineInventoryLabels:
     app.kubernetes.io/part-of: cluster-api-provider-baremetal
     pool.baremetal.alauda.io/eligible: "true"
+    elemental.cattle.io/serial-number: "${System Information/Serial Number}"
   machineInventoryAnnotations:
     elemental.cattle.io/machine-uuid: "${System Information/UUID}"
   config:
     elemental:
       install:
+        # The selected whole disk is erased by elemental install.
         device: ${INSTALL_DEVICE}
         eject-cd: true
         reboot: true
@@ -27,6 +31,7 @@ spec:
           maxSnaps: 4
       registration:
         emulate-tpm: ${EMULATE_TPM}
+        # Required only when emulate-tpm=true and the host has no hardware TPM.
         emulated-tpm-seed: -1
 ---
 apiVersion: elemental.cattle.io/v1beta1
@@ -47,3 +52,16 @@ spec:
     kind: MachineRegistration
     name: ${CLUSTER_NAME}-registration
     namespace: cpaas-system
+  cloud-config:
+    stages:
+      boot:
+        - name: "Size COS_STATE for reprovisioning"
+          files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              permissions: 0644
+              content: |
+                install:
+                  partitions:
+                    state:
+                      # 20 GiB baseline for the ACP 4.3.2 PoC; size for retained snapshots.
+                      size: 20480

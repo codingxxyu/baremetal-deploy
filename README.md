@@ -154,6 +154,8 @@ Bootstrap Host 只运行临时 `minialauda`，不会加入最终 Global Cluster�
 
 首次启动 SeedImage ISO 前完成硬件时钟设置。集群节点时间差不得超过 10 秒。无 TPM 的物理机才设置 `emulate-tpm: true` 和 `emulated-tpm-seed: -1`。
 
+磁盘规划必须在创建 Registration/SeedImage 之前完成，详见第 20 节；不要先启动物理机再临时决定安装盘或数据盘。
+
 安装盘必须明确，不能在多盘主机上盲目使用 `/dev/sda`。清理所有旧的 `COS_STATE`、`COS_PERSISTENT`、`COS_OEM`、`COS_RECOVERY` 标签；需要保留的数据盘不能误擦除。
 
 ### 5.3 网络、DNS、NTP、平台自建 Registry 和 LB
@@ -189,7 +191,7 @@ Bootstrap Host 只运行临时 `minialauda`，不会加入最终 Global Cluster�
 
 ---
 
-## 6. 第 2 步：创建 Bootstrap，再把镜像推入平台 Registry
+## 5. 第 2 步：创建 Bootstrap，再把镜像推入平台 Registry
 
 > 顺序很重要：先执行第 3 步的 Bootstrap `setup.sh`，确认平台自建 Bootstrap Registry 已启动；再回到本节执行镜像导入和 push。不能在 Bootstrap Registry 尚未创建时，把镜像推送到一个假定的客户 Registry。
 
@@ -245,7 +247,7 @@ sudo nerdctl --namespace default pull "${BASE_IMAGE}"
 
 ---
 
-## 7. 第 3 步：创建临时 Bootstrap 管理集群
+## 6. 第 3 步：创建临时 Bootstrap 管理集群
 
 在 Bootstrap Host 上执行官方 Core Package 的 `setup.sh`：
 
@@ -270,7 +272,7 @@ kubectl get nodes
 
 ---
 
-## 8. 第 4 步：在 Bootstrap 上安装 Provider
+## 7. 第 4 步：在 Bootstrap 上安装 Provider
 
 ### 8.1 执行的资源
 
@@ -389,7 +391,7 @@ kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
 
 ---
 
-## 9. 第 5 步：创建 Bare Metal Global 控制面
+## 8. 第 5 步：创建 Bare Metal Global 控制面
 
 Global CP 和 Global Worker 使用不同的物理机、Inventory、Pool 和 MachineDeployment。
 
@@ -489,7 +491,7 @@ kubectl -n cpaas-system get \
 
 ---
 
-## 10. 第 6 步：添加 Bare Metal Global Worker Nodes
+## 9. 第 6 步：添加 Bare Metal Global Worker Nodes
 
 Global Worker 不是 KCP replicas，必须通过单独的 Worker pool、Worker template、KubeadmConfigTemplate 和 MachineDeployment 创建。
 
@@ -556,7 +558,7 @@ kubectl get nodes -o wide
 
 ---
 
-## 11. 第 7 步：安装平台并完成 Global Handoff
+## 10. 第 7 步：安装平台并完成 Global Handoff
 
 Global CP 和 Worker 都 Ready 后，执行最终版本的 ACP installer。保存 installer progress、installer Pod logs、`cpaas-system`、ClusterModule 和节点状态。
 
@@ -582,7 +584,7 @@ Global CP 和 Worker 都 Ready 后，执行最终版本的 ACP installer。保�
 
 ---
 
-## 12. 第 8 步：创建 Bare Metal Workload 控制面
+## 11. 第 8 步：创建 Bare Metal Workload 控制面
 
 此阶段必须使用最终 Global kubeconfig。Workload 名称不能为 `global`。Workload CP 与 Global CP 使用独立的物理机、Inventory 和 pool。
 
@@ -658,7 +660,7 @@ kubectl --kubeconfig <global-kubeconfig> -n cpaas-system get \
 
 ---
 
-## 13. 第 9 步：添加 Bare Metal Workload Worker Nodes
+## 12. 第 9 步：添加 Bare Metal Workload Worker Nodes
 
 Workload Worker 必须独立创建，不能因为 Workload CP Ready 就省略。
 
@@ -728,7 +730,7 @@ kubectl --kubeconfig <workload-kubeconfig> get nodes -o wide
 
 ---
 
-## 14. 最终验收和证据
+## 13. 最终验收和证据
 
 ### 14.1 Global 集群
 
@@ -762,7 +764,7 @@ kubectl --kubeconfig <workload-kubeconfig> get pods -A
 
 ---
 
-## 15. 常见故障排查
+## 14. 常见故障排查
 
 | 症状 | 首查位置 | 常见原因 |
 |---|---|---|
@@ -781,7 +783,7 @@ kubectl --kubeconfig <workload-kubeconfig> get pods -A
 
 ---
 
-## 16. Day-2、数据盘和 DR
+## 15. Day-2、数据盘和 DR
 
 - `reprovision` 会重建 immutable 系统并清理 kubelet/containerd/etcd/Kubernetes 状态；
 - `clean` 释放物理机，但不自动 wipe managed data volume；
@@ -793,7 +795,7 @@ kubectl --kubeconfig <workload-kubeconfig> get pods -A
 
 ---
 
-## 17. 安全要求
+## 16. 安全要求
 
 禁止提交：
 
@@ -826,7 +828,7 @@ Base64 不是加密。Registry 使用客户 CA；脚本和命令不能把密码�
 
 `manifests/templates/` 是这些阶段文件的参数化来源。当前 Bootstrap AppRelease 两个文件和对应 chart values 必须由 ACP 4.3.2 正式交付包提供；没有官方 schema 时不得自行补写 AppRelease 字段。
 
-## 17. 项目文件说明
+## 18. 项目文件说明
 
 README 已包含完整部署步骤；仓库中的其他目录用于辅助部署：
 
@@ -844,3 +846,169 @@ README 已包含完整部署步骤；仓库中的其他目录用于辅助部署�
 - [Bare Metal Provider Installation](https://docs.alauda.io/immutable-infra/1.0/install/bare-metal.html)
 - [Creating Clusters on Bare Metal](https://docs.alauda.io/immutable-infra/1.0/create-cluster/bare-metal.html)
 - [Bare Metal Provider](https://docs.alauda.io/immutable-infra/1.0/overview/providers/bare-metal.html)
+
+## 20. 物理机磁盘与 SeedImage 详细规划
+
+### 20.1 `MachineRegistration` 与 `SeedImage` 是两个阶段
+
+`MachineRegistration` 描述物理机如何注册以及首次安装参数；`SeedImage` 描述由 Elemental 生成的可启动 ISO。二者通过 `spec.registrationRef` 关联。
+
+实际顺序为：
+
+```text
+apply MachineRegistration + SeedImage
+  → wait SeedImageReady=True
+  → 取得/挂载生成的 ISO
+  → 物理机 BIOS/UEFI 从 ISO 启动
+  → elemental-register 注册
+  → elemental install 写入系统盘
+  → MachineInventory 出现
+```
+
+检查：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" -n cpaas-system get machineregistration,seedimage
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" -n cpaas-system wait \
+  --for=condition=SeedImageReady=True \
+  seedimage/<registration-iso-name> --timeout=30m
+```
+
+当前仓库的四个角色文件分别是：
+
+```text
+manifests/global/10-control-plane-registration.yaml
+manifests/global/20-worker-registration.yaml
+manifests/workload/10-control-plane-registration.yaml
+manifests/workload/20-worker-registration.yaml
+```
+
+每个文件包含两个 YAML 文档：一个 `MachineRegistration`，一个 `SeedImage`。四个角色必须使用不同的资源名、物理主机清单和用途，不能把同一个 registration/ISO 混用。
+
+### 20.2 SMBIOS/UUID 字段不能被普通 envsubst 破坏
+
+以下表达式是 `elemental-register` 在物理机上根据 SMBIOS 数据展开的官方表达式：
+
+```yaml
+machineName: "<role-name>-${System Information/UUID}"
+elemental.cattle.io/serial-number: "${System Information/Serial Number}"
+elemental.cattle.io/machine-uuid: "${System Information/UUID}"
+```
+
+它们不是 Bash 环境变量。渲染工具不得把包含空格和 `/` 的表达式当成 shell 变量替换。apply 前检查渲染结果仍保留这些官方表达式；如果 ACP 4.3.2 的 CRD/Elemental 版本规定了不同的表达式，应以该版本官方示例替换。
+
+### 20.3 系统安装盘
+
+在每台物理机启动 ISO 前完成：
+
+1. 识别系统安装盘的稳定 WWN/设备身份；
+2. 将该身份写入 `MachineRegistration.spec.config.elemental.install.device`；
+3. 确认该盘允许被 `elemental install` 重建；
+4. 备份并移除不应保留的旧系统；
+5. 确认数据盘没有被选为安装盘；
+6. BIOS/UEFI 设置从虚拟 CD/ISO 优先启动。
+
+多盘主机不要直接假设 `/dev/sda` 永远相同。若使用 `/dev/elemental-install-target`，必须先按官方多盘固定系统盘方法配置该稳定目标。
+
+安装盘会被系统安装覆盖。不要把业务数据、需要 Adopt 的文件系统和安装盘混在一起。
+
+### 20.4 COS_STATE 分区
+
+`COS_STATE` 保存运行系统和 Elemental snapshot。它不是业务持久盘。默认容量不足以支撑多次镜像切换或保留 snapshot，因此本 PoC 的 SeedImage cloud-config 示例设置：
+
+```yaml
+spec:
+  cloud-config:
+    stages:
+      boot:
+        - name: "Size COS_STATE for reprovisioning"
+          files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              permissions: 0644
+              content: |
+                install:
+                  partitions:
+                    state:
+                      size: 20480
+```
+
+`20480` 的单位和最终可用容量必须按目标 ACP 4.3.2/Elemental 版本及现场磁盘容量复核。不能在没有容量评审的情况下无限增大。
+
+### 20.5 数据盘：不要写进 MachineTemplate
+
+Bare Metal 数据盘属于长期 `MachineInventory`，不是 VM disk list，也不是 `BaremetalMachineTemplate` 的任意字段。正式 Provider schema 确认后，在对应 Inventory 上声明 `spec.storage`。每个数据卷至少要有：
+
+- 稳定设备身份/WWN；
+- 文件系统类型（XFS/ext4）；
+- 挂载路径；
+- 生命周期 policy；
+- Adopt 或 InitializeIfBlank 决策；
+- 数据备份和初始化批准记录。
+
+`Adopt` 适用于已有文件系统和数据的盘：先备份，核对稳定 ID、文件系统 UUID 和挂载路径，严禁误格式化。
+
+`InitializeIfBlank` 只适用于客观为空的可丢弃磁盘，并且必须有单独的初始化批准。registration YAML 本身不应被当作格式化授权。
+
+推荐现场填写：
+
+| 角色 | 主机 | 系统盘 WWN | COS_STATE | 数据盘 WWN | Filesystem | Mount | Policy |
+|---|---|---|---:|---|---|---|---|
+| Workload CP | cp-01 | | 20 GiB | | | | |
+| Workload CP | cp-02 | | 20 GiB | | | | |
+| Workload CP | cp-03 | | 20 GiB | | | | |
+| Workload Worker | worker-01 | | 20 GiB | | | | |
+| Workload Worker | worker-02 | | 20 GiB | | | | |
+| Workload Worker | worker-03 | | 20 GiB | | | | |
+
+### 20.6 Workload CP 与 Worker 磁盘差异
+
+- Workload CP：系统盘、COS_STATE，以及按平台/etcd/业务要求确认的数据盘；
+- Workload Worker：系统盘、COS_STATE，以及按业务需求确认的数据盘；
+- 不要把 DCS VM 的 `/var/lib/kubelet`、`/var/lib/containerd`、`/var/lib/etcd` 磁盘列表直接复制到 Bare Metal；
+- Bare Metal 的节点系统状态由 reprovision 清理，业务数据盘由 Inventory storage 生命周期管理；
+- 数据盘跟随物理 Inventory，不会自动跟随另一台替换物理机。
+
+### 20.7 物理机启动后的检查
+
+物理机从 ISO 启动后，先不要创建 Pool。先等待并检查：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" -n cpaas-system \
+  get machineinventory.elemental.cattle.io -o wide
+
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" -n cpaas-system \
+  describe machineinventory <inventory-name>
+```
+
+确认：
+
+- Inventory 名称已经产生；
+- `status.conditions` 表示主机可用；
+- observed network 正确；
+- observed storage 与现场 worksheet 一致；
+- plan Secret 存在；
+- 没有 registration、TPM、磁盘、DNS、Registry 错误。
+
+只有在 Inventory 名称和状态确认后，才把真实名称填写到：
+
+```text
+manifests/workload/11-control-plane-pool.yaml
+manifests/workload/21-worker-pool.yaml
+```
+
+## 21. Workload 实际创建门禁
+
+Workload 创建不是“apply 四个 YAML 就完成”。每个门禁必须通过：
+
+1. Image Catalog 已包含 `v1.34.5`；
+2. CP/Worker SeedImage 均 `SeedImageReady=True`；
+3. 物理机均从正确 ISO 启动；
+4. 真实 MachineInventory 已产生并 Available；
+5. 系统盘、COS_STATE、数据盘策略已确认；
+6. CP/Worker Inventory 没有重复分配；
+7. CP pool capacity 不小于 KCP replicas；
+8. Worker pool capacity 不小于 MachineDeployment replicas；
+9. Workload API External LB 或 Internal VIP 已准备；
+10. Workload CP Ready 后，才创建 Worker MachineDeployment。
+
+如果跳过 Image Catalog 或 SeedImage 门禁，常见结果是注册成功但 reprovision 失败、`ImageCatalogMiss`、plan Failed 或节点永远不 Ready。
