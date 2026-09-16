@@ -59,5 +59,18 @@ spec:
                 install:
                   partitions:
                     state:
+                      # 20 GiB baseline; validate against ACP 4.3.2 and disk capacity.
+                      size: 20480
+  cloud-config:
+    stages:
+      boot:
+        - name: "Size COS_STATE for reprovisioning"
+          files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              permissions: 0644
+              content: |
+                install:
+                  partitions:
+                    state:
                       # 20 GiB baseline for the ACP 4.3.2 PoC; size for retained snapshots.
                       size: 20480

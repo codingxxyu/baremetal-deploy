@@ -408,6 +408,34 @@ Global CP 和 Global Worker 使用不同的物理机、Inventory、Pool 和 Mach
 | `spec.baseImage` | `${BASE_IMAGE_ISO}` | 首次 ISO 镜像 |
 | `targetPlatform` | `linux/amd64` | 当前支持平台 |
 
+对应 YAML 片段（文件中还包含 SeedImage 的完整 registrationRef、cloud-config 和 COS_STATE 配置）：
+
+```yaml
+spec:
+  config:
+    elemental:
+      install:
+        device: /dev/elemental-install-target
+      registration:
+        emulate-tpm: true
+  # SeedImage document
+  baseImage: <global-registry>/tkestack/baremetal-base-image-iso:v4.3.2-1-1.34.5-3
+  cloud-config:
+    stages:
+      boot:
+        - name: "Size COS_STATE for reprovisioning"
+          files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              permissions: 0644
+              content: |
+                install:
+                  partitions:
+                    state:
+                      size: 20480
+```
+
+需要修改：`device`、TPM 参数、Registry 地址和 role-specific `metadata.name`；不要修改 SMBIOS `${System Information/...}` 表达式。
+
 执行：
 
 ```bash
@@ -437,10 +465,12 @@ metadata:
 spec:
   clusterName: global
   inventoryRefs:
-    - name: <global-cp-01-inventory>
-    - name: <global-cp-02-inventory>
-    - name: <global-cp-03-inventory>
+    - name: <actual-inventory-name-1>
+    - name: <actual-inventory-name-2>
+    - name: <actual-inventory-name-3>
 ```
+
+需要修改：只替换 `inventoryRefs[].name`，使用物理机启动 ISO 后实际生成的 `MachineInventory.metadata.name`；不要使用预估主机名，不要把 Worker Inventory 放进 CP pool。
 
 检查每个 Inventory 只在一个 active pool 中，pool capacity 不小于 KCP replicas，然后执行：
 
@@ -467,6 +497,36 @@ kubectl -n cpaas-system get machineinventorypool
 - KCP replicas 不超过 CP pool capacity；
 - KCP `spec.version` 与 image catalog、OS image、兼容矩阵一致；
 - KCP `machineTemplate.infrastructureRef.name` 与 CP template metadata name 一致。
+
+关键 YAML 片段（完整资源在上述四个文件中）：
+
+```yaml
+# BaremetalCluster: manifests/global/12-baremetal-cluster.yaml
+spec:
+  controlPlaneLoadBalancer:
+    type: External
+    host: <global-api-vip-or-fqdn>
+    port: 6443
+
+# BaremetalMachineTemplate: manifests/global/13-control-plane-machine-template.yaml
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: global-control-plane-pool
+      allocationPolicy: Ordered
+
+# KubeadmControlPlane: manifests/global/15-control-plane.yaml
+spec:
+  replicas: 3
+  version: v1.34.5
+  machineTemplate:
+    infrastructureRef:
+      kind: BaremetalMachineTemplate
+      name: global-control-plane-machine-template
+```
+
+需要修改：Global API endpoint/LB mode、replicas、Kubernetes version 和引用名；Internal VIP 模式还要按 ACP 4.3.2 CRD 增加 VRID 等字段，不能直接沿用 External 示例。
 
 执行：
 
@@ -538,6 +598,34 @@ kubectl -n cpaas-system get machineinventorypool
 
 所有 `metadata.name` 和 `infrastructureRef/configRef` 必须一致。Worker replicas 不得超过 Worker pool capacity。
 
+关键 YAML 片段：
+
+```yaml
+# Worker BaremetalMachineTemplate
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: global-worker-pool
+
+# Worker MachineDeployment
+spec:
+  clusterName: global
+  replicas: 3
+  template:
+    spec:
+      version: v1.34.5
+      bootstrap:
+        configRef:
+          kind: KubeadmConfigTemplate
+          name: global-worker-kubeadm-config
+      infrastructureRef:
+        kind: BaremetalMachineTemplate
+        name: global-worker-machine-template
+```
+
+需要修改：Worker pool 的真实 Inventory 名、Deployment replicas、KubeadmConfigTemplate 的 join/SSH 配置和所有引用名；不要把 `PROVIDER_ID` 留在最终文件中。
+
 ```bash
 kubectl apply -f manifests/global/22-worker-machine-template.yaml
 kubectl apply -f manifests/global/23-worker-kubeadm-config-template.yaml
@@ -599,6 +687,42 @@ kubectl --kubeconfig <global-kubeconfig> \
 
 等待所有 Workload CP Inventory Available/Ready。
 
+对应文件 `manifests/workload/10-control-plane-registration.yaml` 的关键片段：
+
+```yaml
+# MachineRegistration
+metadata:
+  name: workload-poc-control-plane-registration
+spec:
+  machineName: "workload-poc-control-plane-${System Information/UUID}"
+  config:
+    elemental:
+      install:
+        device: <stable-install-device>
+      registration:
+        emulate-tpm: true
+
+# SeedImage
+metadata:
+  name: workload-poc-control-plane-registration-iso
+spec:
+  baseImage: <global-registry>/tkestack/baremetal-base-image-iso:v4.3.2-1-1.34.5-3
+  registrationRef:
+    name: workload-poc-control-plane-registration
+  cloud-config:
+    stages:
+      boot:
+        - files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              content: |
+                install:
+                  partitions:
+                    state:
+                      size: 20480
+```
+
+需要修改：`metadata.name` 前缀、安装盘、TPM 决策、Global Registry 地址；保留 SMBIOS 表达式和 `registrationRef` 的精确引用。完整 YAML 在该文件中。apply 后先等待 `SeedImageReady=True`，再让物理 CP 从生成的 ISO 启动；详见第 20–22 节门禁。
+
 ### 12.2 创建 Workload CP Pool
 
 ```yaml
@@ -639,6 +763,43 @@ kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/11-control-
 - Workload Pod/Service/Join CIDR 不冲突；
 - Kubernetes version 与 Global/OS image catalog 一致。
 
+关键 YAML 片段（完整资源在本节列出的四个文件中）：
+
+```yaml
+# manifests/workload/12-baremetal-cluster.yaml
+spec:
+  controlPlaneLoadBalancer:
+    type: External
+    host: <workload-api-vip-or-fqdn>
+    port: 6443
+
+# manifests/workload/13-control-plane-machine-template.yaml
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: workload-poc-control-plane-pool
+
+# manifests/workload/14-cluster.yaml
+spec:
+  infrastructureRef:
+    kind: BaremetalCluster
+    name: workload-poc
+  controlPlaneRef:
+    kind: KubeadmControlPlane
+    name: workload-poc-control-plane
+
+# manifests/workload/15-control-plane.yaml
+spec:
+  replicas: 3
+  version: v1.34.5
+  machineTemplate:
+    infrastructureRef:
+      name: workload-poc-control-plane-machine-template
+```
+
+需要修改：Workload API endpoint/LB 模式、真实 cluster name、CP pool 名称、replicas、Pod/Service CIDR、Kubernetes version 和所有 cross-reference；不要把 Global 的 endpoint 或 CIDR 原样复制过来。
+
 ```bash
 kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/12-baremetal-cluster.yaml
 kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/13-control-plane-machine-template.yaml
@@ -675,6 +836,42 @@ kubectl --kubeconfig <global-kubeconfig> \
 
 确认 Worker Inventory 不属于 Global 或 Workload CP pool。
 
+对应 `manifests/workload/20-worker-registration.yaml` 的关键片段：
+
+```yaml
+# MachineRegistration
+metadata:
+  name: workload-poc-worker-registration
+spec:
+  machineName: "workload-poc-worker-${System Information/UUID}"
+  config:
+    elemental:
+      install:
+        device: <stable-install-device>
+      registration:
+        emulate-tpm: true
+
+# SeedImage
+metadata:
+  name: workload-poc-worker-registration-iso
+spec:
+  baseImage: <global-registry>/tkestack/baremetal-base-image-iso:v4.3.2-1-1.34.5-3
+  registrationRef:
+    name: workload-poc-worker-registration
+  cloud-config:
+    stages:
+      boot:
+        - files:
+            - path: /etc/elemental/config.d/partitions.yaml
+              content: |
+                install:
+                  partitions:
+                    state:
+                      size: 20480
+```
+
+需要修改：Worker 专用资源名、安装盘、TPM、Global Registry 地址；保持 Worker 与 CP 的 Registration/SeedImage 名称不同。apply 后等待 `SeedImageReady=True`，再启动 Worker 物理机。
+
 ### 13.2 创建 Workload Worker Pool
 
 ```yaml
@@ -701,6 +898,42 @@ kubectl --kubeconfig <global-kubeconfig> apply -f manifests/workload/21-worker-p
 1. `manifests/workload/22-worker-machine-template.yaml`：`machineInventoryPoolRef.name` 指向 Workload Worker pool；
 2. `manifests/workload/23-worker-kubeadm-config-template.yaml`：join configuration、SSH key、版本；
 3. `manifests/workload/24-worker-machine-deployment.yaml`：`clusterName: workload-poc`、replicas、template/config 引用、version。
+
+关键 YAML 片段：
+
+```yaml
+# Worker BaremetalMachineTemplate
+spec:
+  template:
+    spec:
+      machineInventoryPoolRef:
+        name: workload-poc-worker-pool
+
+# Worker KubeadmConfigTemplate
+spec:
+  template:
+    spec:
+      format: cloud-config
+      joinConfiguration:
+        nodeRegistration:
+          kubeletExtraArgs:
+            provider-id: <ACP-4.3.2-provider-supported-value>
+
+# Worker MachineDeployment
+spec:
+  clusterName: workload-poc
+  replicas: 3
+  template:
+    spec:
+      version: v1.34.5
+      bootstrap:
+        configRef:
+          name: workload-poc-worker-kubeadm-config
+      infrastructureRef:
+        name: workload-poc-worker-machine-template
+```
+
+需要修改：Worker pool 的真实 Inventory 名、replicas、版本、join 配置和引用名；`provider-id` 必须按 ACP 4.3.2 官方 Bare Metal 示例确认，不能保留 `PROVIDER_ID` 字面值。
 
 ```bash
 kubectl --kubeconfig <global-kubeconfig> \
