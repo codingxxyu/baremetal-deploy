@@ -309,7 +309,83 @@ kubectl get crd | grep -E \
 kubectl -n cpaas-system get configmap elemental-image-catalog -o yaml
 ```
 
-成功标准：Provider controllers Running、CRD Established、image catalog 存在且有目标 Kubernetes 版本 key。
+成功标准：Provider controllers Running、CRD Established、image catalog 对象存在。目标 Kubernetes 版本的映射在下一节确认。
+
+### 8.4 镜像导入后的 Image Catalog 配置（现有传统 OS Global 场景必做）
+
+如果 Global Cluster 已经通过传统 OS 方式部署完成，本次只创建 Bare Metal Workload，则不重新创建 Bootstrap Global，也不执行 Global CP/Worker 的 Bare Metal 部署。此时应在现有 Global 上完成以下配置：
+
+1. 将 `base-image-iso` 和 `base-image` 推送到现有 Global 平台 Registry；
+2. 确认 `elemental-image-catalog` ConfigMap 已由 Bare Metal Provider 创建；
+3. 使用 merge patch 增加 `Kubernetes version → base-image` 映射；
+4. 保留 ConfigMap 中已有的其他版本，不要整体替换；
+5. 确认映射完成后，再创建 Workload 的 `MachineRegistration`、`SeedImage` 和 `Machine`。
+
+本次 ACP 4.3.2 基线对应：
+
+```bash
+export GLOBAL_KUBECONFIG=/secure/path/global-kubeconfig
+export GLOBAL_REGISTRY=<existing-global-registry-address>
+export KUBERNETES_VERSION=v1.34.5
+export OS_IMAGE_TAG=v4.3.2-1-1.34.5-3
+export BASE_IMAGE=${GLOBAL_REGISTRY}/tkestack/baremetal-base-image:${OS_IMAGE_TAG}
+export BASE_IMAGE_ISO=${GLOBAL_REGISTRY}/tkestack/baremetal-base-image-iso:${OS_IMAGE_TAG}
+```
+
+Global Registry 地址应从现有 Global 配置获取，不要猜测。例如：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+  -n cpaas-system get cluster global \\
+  -o jsonpath='{.metadata.annotations.cpaas\\.io/registry-address}'
+```
+
+如果 Registry 需要认证，admin 密码通常来自现有 Global 的 `registry-admin` Secret。不要把密码写入命令文件或 YAML：
+
+```bash
+export GLOBAL_REGISTRY_PASSWORD="$({
+  kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+    -n cpaas-system get secret registry-admin \\
+    -o jsonpath='{.data.password}' | base64 -d
+})"
+```
+
+确认两个镜像已 push 到 `${GLOBAL_REGISTRY}` 后，读取当前 Image Catalog：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+  -n cpaas-system get configmap elemental-image-catalog -o yaml
+```
+
+使用 **merge patch** 增加目标版本映射，不要覆盖已有 `data`：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+  -n cpaas-system patch configmap elemental-image-catalog \\
+  --type merge \\
+  -p "{\\"data\\":{\\"${KUBERNETES_VERSION}\\":\\"${BASE_IMAGE}\\"}}"
+```
+
+验证：
+
+```bash
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+  -n cpaas-system get configmap elemental-image-catalog -o yaml
+
+kubectl --kubeconfig "${GLOBAL_KUBECONFIG}" \\
+  -n cpaas-system get configmap elemental-image-catalog \\
+  -o jsonpath="{.data.${KUBERNETES_VERSION}}"
+```
+
+期望结果是：
+
+```text
+<existing-global-registry>/tkestack/baremetal-base-image:v4.3.2-1-1.34.5-3
+```
+
+`elemental-image-catalog` 使用 `base-image`，不能写入 `base-image-iso`。`SeedImage.spec.baseImage` 才使用 `base-image-iso`。如果 `v1.34.5` 缺失，Bare Metal Provider 后续会出现 `ImageCatalogMiss`，相关 `BaremetalMachine` 可能进入 `Failed`；不要等到创建 Workload Machine 后才补这个映射。
+
+对于本仓库的完整 Bare Metal Global 从零部署路径，`manifests/bootstrap/02-image-catalog.yaml` 是模板；对于已经存在的传统 OS Global，优先使用上面的 merge patch 保留现有 ConfigMap 内容。
 
 ---
 
